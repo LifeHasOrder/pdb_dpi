@@ -66,11 +66,17 @@ cd pdb_dpi
 python dpi_calculator.py --help
 ```
 
-To run the test suite:
+To run the formula validation tests (no network required):
 
 ```bash
 pip install pytest
 pytest test_dpi_calculator.py -v
+```
+
+To also run the end-to-end PDB download tests (requires internet access):
+
+```bash
+pytest --run-network test_dpi_calculator.py -v
 ```
 
 ---
@@ -143,34 +149,102 @@ python dpi_calculator.py --help
 
 ## Validation Against Cruickshank (1999) Table 3
 
+### PDB ID Mapping
+
+The following table maps Cruickshank (1999) Table 3 proteins to their confirmed RCSB PDB IDs:
+
+| Protein | PDB ID | Reference | End-to-end status |
+|---------|--------|-----------|-------------------|
+| Concanavalin A | **1NLS** | Deacon et al. (1997) | ✅ Should match |
+| HEW lysozyme (ground) | **193L** | Vaney et al. (1996) | ✅ Should match |
+| HEW lysozyme (space) | **194L** | Vaney et al. (1996) | ✅ Should match |
+| γB-crystallin | **1GCS** | Tickle et al. (1998a) | ✅ Should match |
+| βB2-crystallin | **2BB2** | Tickle et al. (1998a) | ✅ Should match |
+| β-purothionin | **1BHP** | Stec, Rao et al. (1995) | ✅ Should match |
+| α₁-purothionin | **2PLH** | Rao et al. (1995) | ✅ Should match |
+| EM lysozyme | **1JUG** | Guss et al. (1997) | ✅ Should match |
+| Azurin II | **1ARN** | Dodd et al. (1995) | ⚠️ Known mismatch (see below) |
+| Ribonuclease A with RI | **1DFJ** | Kobe & Deisenhofer (1995) | ✅ Should match |
+| Fab HyHEL-5 with HEWL | **3HFL** | Cohen et al. (1996) | ⚠️ OBSOLETE on RCSB (cannot download) |
+| Immunoglobulin (Table 1) | **1BWW** | Usón et al. (1999) | ⚠️ Table 1 only; known mismatch |
+
+### Known Mismatches
+
+**Azurin II (1ARN):** Cruickshank used values from Dodd *et al.* (1995)
+(R=0.188, R_free=0.207, n_obs=12162).  The PDB entry was deposited in 2000,
+after the Cruickshank paper was published, and may reflect a re-refinement.
+End-to-end tests for 1ARN are marked `xfail`.
+
+**Fab HyHEL-5 with HEWL (3HFL):** This PDB entry is **OBSOLETE** on RCSB and
+has been superseded by a higher-resolution structure.  The entry cannot be
+downloaded from RCSB.  The formula-only test (see below) still validates the
+calculation using the Table 3 intermediate values directly.
+
+**Fab HyHEL-5 R_free DPI discrepancy:** Table 3 prints 0.69 Å for the R_free
+DPI of Fab HyHEL-5, which appears to be a transcription error (the same value
+as the RNase A row immediately above it).  Computing from the tabulated
+intermediate values ((Nᵢ/n_obs)^½ = 0.607, C^(−1/3) = 1.111, R_free = 0.288,
+d_min = 2.65 Å) gives ~0.89 Å.  The formula test uses 0.89 Å and the
+discrepancy is documented.
+
+**Immunoglobulin (1BWW):** The Usón *et al.* manuscript was "in preparation"
+when Cruickshank published.  This structure appears only in Table 1 (not Table
+3).  The deposited model has better R-factors than Cruickshank's paper values.
+End-to-end tests for 1BWW are marked `xfail`.
+
+### Formula-Only Validation Table (Tier 1)
+
 The following table reproduces the published DPI values using only the
 intermediate factors listed in the paper.  All values computed by this
-script are within 15 % of the published results (rounding to 2 significant
-figures accounts for most of the difference).
+script are within 1 % of the values obtained from the tabulated intermediates.
+Where the printed final DPI in Table 3 differs by more than 1 % from the
+computed value (due to rounding of the intermediate factors to 3 decimal
+places), the computed value is used in the formula tests.
 
-| Protein | Nᵢ | n_obs | (Nᵢ/p)^½ | C^(−1/3) | R | d_min (Å) | σ(r,R) published | σ(r,R) calc |
-|---------|-----|-------|-----------|---------|-----|-----------|-----------------|-------------|
+| Protein | Nᵢ | n_obs | (Nᵢ/p)^½ | C^(−1/3) | R | d_min (Å) | σ(r,R) printed | σ(r,R) calc |
+|---------|-----|-------|-----------|---------|-----|-----------|----------------|-------------|
 | Concanavalin A | 2130 | 116712 | 0.148 | 1.099 | 0.128 | 0.94 | 0.034 | 0.034 |
-| HEW lysozyme (ground) | 1145 | 24111 | 0.242 | 1.048 | 0.184 | 1.33 | 0.11 | 0.107 |
+| HEW lysozyme (ground) | 1145 | 24111 | 0.242 | 1.048 | 0.184 | 1.33 | 0.11 | **0.1075** ¹ |
 | HEW lysozyme (space) | 1141 | 21542 | 0.259 | 1.040 | 0.183 | 1.40 | 0.12 | 0.120 |
-| γB-crystallin | 1708 | 26151 | 0.297 | 1.032 | 0.180 | 1.49 | 0.14 | 0.142 |
-| βB2-crystallin | 1558 | 18583 | 0.356 | 1.032 | 0.184 | 2.10 | 0.25 | 0.246 |
-| β-purothionin | 439 | 4966 | 0.370 | 1.050 | 0.198 | 1.70 | 0.22 | 0.226 |
+| γB-crystallin | 1708 | 26151 | 0.297 | 1.032 | 0.180 | 1.49 | 0.14 | **0.1424** ¹ |
+| βB2-crystallin | 1558 | 18583 | 0.356 | 1.032 | 0.184 | 2.10 | 0.25 | **0.2459** ¹ |
+| β-purothionin | 439 | 4966 | 0.370 | 1.050 | 0.198 | 1.70 | 0.22 | **0.2265** ¹ |
 | EM lysozyme | 1068 | 8308 | 0.514 | 1.040 | 0.169 | 1.90 | 0.30 | 0.297 |
-| Azurin II | 1012 | 12162 | 0.353 | 1.174 | 0.188 | 1.90 | 0.26 | 0.256 |
+| Azurin II | 1012 | 12162 | 0.353 | 1.174 | 0.188 | 1.90 | 0.26 | **0.2564** ¹ |
 | Ribonuclease A+RI | 4416 | 18859 | 1.922 | 1.145 | 0.194 | 2.50 | 1.85 | 1.849 |
 
-| Protein | (Nᵢ/n_obs)^½ | R_free | σ(r,Rfree) published | σ(r,Rfree) calc |
+| Protein | (Nᵢ/n_obs)^½ | R_free | σ(r,Rfree) printed | σ(r,Rfree) calc |
 |---------|-------------|--------|---------------------|-----------------|
 | Concanavalin A | 0.135 | 0.148 | 0.036 | 0.036 |
 | HEW lysozyme (ground) | 0.218 | 0.226 | 0.12 | 0.119 |
 | HEW lysozyme (space) | 0.230 | 0.226 | 0.13 | 0.131 |
 | γB-crystallin | 0.256 | 0.204 | 0.14 | 0.139 |
-| βB2-crystallin | 0.290 | 0.200 | 0.22 | 0.217 |
+| βB2-crystallin | 0.290 | 0.200 | 0.22 | **0.2174** ¹ |
 | β-purothionin | 0.297 | 0.281 | 0.26 | 0.258 |
 | EM lysozyme | 0.359 | 0.229 | 0.28 | 0.281 |
 | Azurin II | 0.288 | 0.207 | 0.23 | 0.231 |
 | Ribonuclease A+RI | 0.484 | 0.286 | 0.69 | 0.686 |
+| Fab HyHEL-5 | 0.607 | 0.288 | ~~0.69~~ **0.89** ² | 0.892 |
+
+¹ Computed value differs from printed value by >1% due to rounding of the
+  intermediate factors in the paper.  The formula test uses the computed value.
+
+² The printed value 0.69 appears to be a transcription error (same as the
+  RNase A row above).  Computing from the intermediate values gives ~0.89.
+
+### Running the End-to-End PDB Tests (Tier 2)
+
+End-to-end tests download the actual PDB mmCIF files from RCSB and run the
+full pipeline (parse → calculate → compare).  They are marked
+`@pytest.mark.network` and skipped by default:
+
+```bash
+# Run all tests including PDB downloads
+pytest --run-network test_dpi_calculator.py -v
+
+# Run only the end-to-end tests
+pytest --run-network -m network test_dpi_calculator.py -v
+```
 
 ---
 
@@ -187,6 +261,22 @@ true value.
 
 Only atoms with `alt_loc` = `''` or `'A'` are included by default to avoid
 inflating Nᵢ and skewing B_avg.
+
+### HETATM records and metal ions
+
+By default, HETATM records (ligands, modified residues, metal ions) are
+**excluded** from the atom count.  Metal ions such as Cu²⁺ (Azurin II), Fe
+(haem proteins), Zn (zinc finger proteins), etc. are always stored as HETATM.
+If your structure has an active-site metal that was included in Cruickshank's
+original count, pass ``--include-hetatm`` on the command line:
+
+```bash
+python dpi_calculator.py --pdb-id 1ARN --include-hetatm
+```
+
+or set ``include_hetatm=True`` when constructing ``DPICalculator`` directly.
+When testing structures from Cruickshank Table 3 that have metal ions, using
+``include_hetatm=True`` more closely matches the original atom counts.
 
 ### Completeness factor
 
