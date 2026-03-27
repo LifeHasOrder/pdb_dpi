@@ -9,21 +9,21 @@ Kumar et al. 2015), reproducing the calculations of the now-offline Online_DPI s
 Theory
 ------
 Overall DPI (x-coordinate precision at average B):
-    σ(x, B_avg) = sqrt(N_a / p) × C^(-1/3) × R × d_min          [R-based]
-    σ(x, B_avg) = sqrt(N_a / N_free) × C^(-1/3) × R_free × d_min  [R_free-based]
+    σ(x, B_avg) = sqrt(N_a / p)     × C^(-1/3) × R      × d_min  [R-based]
+    σ(x, B_avg) = sqrt(N_a / n_obs) × C^(-1/3) × R_free × d_min  [R_free-based]
 
 Isotropic position error:
     σ(r, B_avg) = sqrt(3) × σ(x, B_avg)
 
 Per-atom coordinate precision (Gurusaran et al. 2014):
-    σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (4 × d_min²)]
+    σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (2 × d_min²)]
     σ(r, B_i) = sqrt(3) × σ(x, B_i)
 
 where:
     N_a    = number of non-H atoms included in refinement
     p      = N_obs − N_params  (degrees of freedom; can be negative at low resolution)
-    N_free = number of free reflections (for R_free formula)
-    N_obs  = number of observed reflections used in refinement
+    n_obs  = number of observed reflections used in refinement (used in R_free formula)
+    N_params = number of refined parameters
     C      = data completeness (0–1)
     R      = conventional R-factor (R_work)
     R_free = free R-factor
@@ -32,6 +32,11 @@ where:
     B_i    = B-factor of atom i
     Z_i    = atomic number of atom i
     Z_avg  = scattering-weighted average atomic number
+
+Note on the R_free formula: Cruickshank (1999) Eq. 31 and Table 3 clearly show that
+the R_free formula uses n_obs (total observed reflections) as the denominator, NOT
+N_free (number of free-set reflections).  The factor (N_i/n_obs)^½ is tabulated
+explicitly in Table 3 for every protein in that column.
 
 References
 ----------
@@ -530,6 +535,116 @@ class MMCIFParser:
 
 
 # ---------------------------------------------------------------------------
+# Phenix log parser
+# ---------------------------------------------------------------------------
+
+class PhenixLogParser:
+    """Parse phenix.refine output log files for refinement statistics.
+
+    Phenix logs contain refinement statistics in a tabular format that differs
+    from PDB REMARK 3.  This parser extracts R_work, R_free, N_obs, N_params,
+    completeness, and resolution from the final refinement cycle reported.
+    """
+
+    @classmethod
+    def parse(cls, filepath: str) -> RefinementParams:
+        params = RefinementParams(source='Phenix log')
+        with open(filepath, 'r', errors='replace') as fh:
+            content = fh.read()
+        cls._extract(content, params)
+        return params
+
+    @classmethod
+    def _extract(cls, content: str, params: RefinementParams):
+        # Resolution
+        for pat in [
+            r'd_min\s*=\s*([\d.]+)',
+            r'High resolution limit\s*:\s*([\d.]+)',
+            r'resolution\s*\(high\)\s*=\s*([\d.]+)',
+            r'high_resolution\s*=\s*([\d.]+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                params.resolution = float(m.group(1))
+                break
+
+        # R_work — take the last occurrence (final cycle)
+        r_work_vals = re.findall(
+            r'r_work\s*=\s*([\d.]+)', content, re.IGNORECASE)
+        if not r_work_vals:
+            r_work_vals = re.findall(
+                r'R-work\s*=\s*([\d.]+)', content, re.IGNORECASE)
+        if r_work_vals:
+            v = float(r_work_vals[-1])
+            params.r_work = v if v < 1 else v / 100.0
+
+        # R_free — take the last occurrence (final cycle)
+        r_free_vals = re.findall(
+            r'r_free\s*=\s*([\d.]+)', content, re.IGNORECASE)
+        if not r_free_vals:
+            r_free_vals = re.findall(
+                r'R-free\s*=\s*([\d.]+)', content, re.IGNORECASE)
+        if r_free_vals:
+            v = float(r_free_vals[-1])
+            params.r_free = v if v < 1 else v / 100.0
+
+        # Number of reflections used in refinement
+        for pat in [
+            r'number_of_reflections\s*=\s*(\d+)',
+            r'Number of reflections used in refinement\s*:\s*(\d+)',
+            r'Reflections used in refinement\s*:\s*(\d+)',
+            r'n_obs\s*=\s*(\d+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                params.n_obs = int(m.group(1))
+                break
+
+        # Number of free reflections
+        for pat in [
+            r'number_of_test_reflections\s*=\s*(\d+)',
+            r'Number of test set reflections\s*:\s*(\d+)',
+            r'n_free\s*=\s*(\d+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                params.n_free = int(m.group(1))
+                break
+
+        # Number of parameters
+        for pat in [
+            r'Number of parameters\s*:\s*(\d+)',
+            r'number_of_parameters\s*=\s*(\d+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                params.n_params = int(m.group(1))
+                break
+
+        # Completeness
+        for pat in [
+            r'completeness\s*\(%\)\s*=\s*([\d.]+)',
+            r'Completeness\s*\(%\)\s*:\s*([\d.]+)',
+            r'completeness_in_range\s*=\s*([\d.]+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                v = float(m.group(1))
+                params.completeness = v / 100.0 if v > 1 else v
+                break
+
+        # Number of atoms
+        for pat in [
+            r'Number of atoms\s*:\s*(\d+)',
+            r'n_atoms\s*=\s*(\d+)',
+        ]:
+            m = re.search(pat, content, re.IGNORECASE)
+            if m:
+                params.n_atoms_refined = int(m.group(1))
+                break
+
+
+# ---------------------------------------------------------------------------
 # RCSB downloader
 # ---------------------------------------------------------------------------
 
@@ -560,11 +675,14 @@ class DPICalculator:
     Computes Cruickshank DPI (overall) and per-atom coordinate precision.
 
     Two overall DPI formulae are implemented:
-        R-based:     σ(x) = sqrt(N_a / p)    × C^(-1/3) × R      × d_min
-        Rfree-based: σ(x) = sqrt(N_a/N_free) × C^(-1/3) × R_free × d_min
+        R-based:     σ(x) = sqrt(N_a / p)     × C^(-1/3) × R      × d_min
+        Rfree-based: σ(x) = sqrt(N_a / n_obs) × C^(-1/3) × R_free × d_min
+
+    The R_free formula uses n_obs (total observed reflections) as the denominator,
+    per Cruickshank (1999) Eq. 31 and Table 3 — NOT N_free (free-set size).
 
     Per-atom (Gurusaran et al. 2014):
-        σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (4 × d_min²)]
+        σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (2 × d_min²)]
     """
 
     def __init__(
@@ -586,7 +704,11 @@ class DPICalculator:
         self.scale_factor = scale_factor
 
     def _working_atoms(self) -> List[Atom]:
-        """Atoms included in the DPI calculation."""
+        """Atoms included in the DPI calculation.
+
+        Alternate conformers B, C, … are excluded; only the primary conformer
+        (alt_loc == '' or 'A') is kept to avoid inflating N_a and skewing B_avg.
+        """
         result = []
         for a in self.atoms:
             if a.is_hydrogen and not self.include_hydrogens:
@@ -594,6 +716,9 @@ class DPICalculator:
             if a.record_type == 'HETATM' and not self.include_hetatm:
                 continue
             if a.occupancy < self.min_occupancy:
+                continue
+            # Exclude non-primary alternate conformers (B, C, …)
+            if a.alt_loc not in ('', 'A'):
                 continue
             result.append(a)
         return result
@@ -613,21 +738,58 @@ class DPICalculator:
     def _n_atoms(self, working_atoms: List[Atom]) -> int:
         return self.params.n_atoms_refined or len(working_atoms)
 
+    def _check_params(self) -> None:
+        """Emit warnings for suspicious refinement parameter values."""
+        p = self.params
+        if p.r_work is not None and p.r_free is not None:
+            if p.r_work > p.r_free:
+                print(f"  Warning: R_work ({p.r_work:.4f}) > R_free ({p.r_free:.4f}) — "
+                      f"this is unusual and may indicate a parsing error.")
+        if p.r_work is not None:
+            if p.r_work > 0.6:
+                print(f"  Warning: R_work ({p.r_work:.4f}) > 0.6 — likely a parsing error "
+                      f"or structure is not properly refined.")
+            elif p.r_work < 0.01:
+                print(f"  Warning: R_work ({p.r_work:.4f}) < 0.01 — likely a parsing error.")
+        if p.completeness is not None and p.completeness < 0.5:
+            print(f"  Warning: Data completeness ({p.completeness:.1%}) < 50% — "
+                  f"DPI values may be unreliable.")
+        if p.resolution is None:
+            print("  Warning: Resolution (d_min) is missing; DPI cannot be computed.")
+        elif p.resolution <= 0 or p.resolution > 10:
+            print(f"  Warning: Resolution ({p.resolution} Å) appears unreasonable.")
+
+    def _estimate_n_params(self, n_atoms: int) -> Optional[int]:
+        """Auto-estimate N_params when not reported.
+
+        Standard approximation:
+            isotropic B:   N_params ≈ 4 × N_atoms  (x, y, z, B per atom)
+            anisotropic B: N_params ≈ 10 × N_atoms (x, y, z, 6×Uij, occ per atom)
+        """
+        estimated = 4 * n_atoms
+        print(f"  Note: N_params not found in file; auto-estimating as "
+              f"4 × N_atoms = {estimated} (isotropic B assumption). "
+              f"Override with --n-params if needed.")
+        return estimated
+
     def calculate_r_based(self) -> Optional[DPIResult]:
         """Compute DPI using R_work and p = N_obs − N_params."""
         p = self.params
+        self._check_params()
         if p.r_work is None or p.resolution is None:
             return None
         n_obs = p.n_obs
-        n_params = p.n_params
-        if n_obs is None or n_params is None:
+        if n_obs is None:
             return None
+        working = self._working_atoms()
+        n_a = self._n_atoms(working)
+        n_params = p.n_params
+        if n_params is None:
+            n_params = self._estimate_n_params(n_a)
         dof = n_obs - n_params
         if dof <= 0:
             print("  Warning: p = N_obs − N_params ≤ 0; R-based DPI is not valid. Use R_free formula.")
             return None
-        working = self._working_atoms()
-        n_a = self._n_atoms(working)
         comp = p.completeness or 1.0
         sigma_x = self.scale_factor * math.sqrt(n_a / dof) * (comp ** (-1/3)) * p.r_work * p.resolution
         sigma_r = math.sqrt(3) * sigma_x
@@ -641,25 +803,27 @@ class DPICalculator:
         )
 
     def calculate_rfree_based(self) -> Optional[DPIResult]:
-        """Compute DPI using R_free and N_free reflections."""
+        """Compute DPI using R_free and n_obs (total observed reflections).
+
+        Per Cruickshank (1999) Eq. 31 and Table 3, the R_free formula uses n_obs
+        (total observed reflections) as the denominator — NOT N_free (the free-set
+        size).  Table 3 lists (Nᵢ/n_obs)^½ explicitly in the R_free rows, confirming
+        this choice.
+        """
         p = self.params
         if p.r_free is None or p.resolution is None:
             return None
-        n_a_val = p.n_atoms_refined
         working = self._working_atoms()
+        n_a_val = p.n_atoms_refined
         if n_a_val is None:
             n_a_val = len(working)
 
-        n_free = p.n_free
-        if n_free is None:
-            # Fall back: use p = N_obs if available
-            if p.n_obs is None:
-                return None
-            n_free = p.n_obs  # Cruickshank's suggestion when p < 0
-            print("  Note: N_free not found; using N_obs as denominator for R_free DPI.")
+        n_obs = p.n_obs
+        if n_obs is None:
+            return None
 
         comp = p.completeness or 1.0
-        sigma_x = self.scale_factor * math.sqrt(n_a_val / n_free) * (comp ** (-1/3)) * p.r_free * p.resolution
+        sigma_x = self.scale_factor * math.sqrt(n_a_val / n_obs) * (comp ** (-1/3)) * p.r_free * p.resolution
         sigma_r = math.sqrt(3) * sigma_x
         b_avg = self._b_average(working)
         z_avg = self._z_average(working)
@@ -677,8 +841,8 @@ class DPICalculator:
         result = []
         for atom in working:
             b_diff = atom.b_iso - b_avg
-            # B-factor exponential correction
-            b_corr = math.exp(b_diff / (4.0 * d_min ** 2))
+            # B-factor exponential correction (Gurusaran et al. 2014, Eq. 6)
+            b_corr = math.exp(b_diff / (2.0 * d_min ** 2))
             # Atomic number correction (optional)
             if self.apply_z_correction:
                 z_corr = z_avg / max(atom.atomic_number, 1)
@@ -821,6 +985,9 @@ def build_parser():
     src.add_argument('--file', metavar='PATH',
                      help='Path to PDB or mmCIF file')
 
+    p.add_argument('--phenix-log', metavar='PATH',
+                   help='Path to a phenix.refine output log file to extract '
+                        'refinement statistics (overrides parsed REMARK 3 values)')
     p.add_argument('--out-dir', metavar='DIR', default='.',
                    help='Output directory (default: current directory)')
     p.add_argument('--prefix', metavar='STR', default='',
@@ -859,6 +1026,28 @@ def build_parser():
 
 
 def apply_overrides(params: RefinementParams, args) -> RefinementParams:
+    # Merge in Phenix log statistics (lower priority than explicit CLI overrides)
+    if getattr(args, 'phenix_log', None):
+        phenix_params = PhenixLogParser.parse(args.phenix_log)
+        print(f"\nPhenix log parsed: {args.phenix_log}")
+        # Only overwrite fields that are currently missing
+        if params.resolution is None and phenix_params.resolution is not None:
+            params.resolution = phenix_params.resolution
+        if params.r_work is None and phenix_params.r_work is not None:
+            params.r_work = phenix_params.r_work
+        if params.r_free is None and phenix_params.r_free is not None:
+            params.r_free = phenix_params.r_free
+        if params.completeness is None and phenix_params.completeness is not None:
+            params.completeness = phenix_params.completeness
+        if params.n_obs is None and phenix_params.n_obs is not None:
+            params.n_obs = phenix_params.n_obs
+        if params.n_free is None and phenix_params.n_free is not None:
+            params.n_free = phenix_params.n_free
+        if params.n_params is None and phenix_params.n_params is not None:
+            params.n_params = phenix_params.n_params
+        if params.n_atoms_refined is None and phenix_params.n_atoms_refined is not None:
+            params.n_atoms_refined = phenix_params.n_atoms_refined
+
     if args.resolution is not None:
         params.resolution = args.resolution
     if args.r_work is not None:
