@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 DPI Calculator – Diffraction Precision Index for protein crystal structures
 ===========================================================================

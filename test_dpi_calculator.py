@@ -106,7 +106,7 @@ TABLE3 = [
 ]
 
 # Tolerance: published values are rounded to 2 significant figures; allow 15%
-_REL_TOL = 0.15
+_REL_TOL = 0.01
 
 
 @pytest.mark.parametrize('label,n_i,n_obs,ni_p_half,c_inv13,R,Rfree,d_min,exp_r,exp_rfree',
