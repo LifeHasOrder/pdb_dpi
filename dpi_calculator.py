@@ -16,8 +16,8 @@ Overall DPI (x-coordinate precision at average B):
 Isotropic position error:
     σ(r, B_avg) = sqrt(3) × σ(x, B_avg)
 
-Per-atom coordinate precision (Gurusaran et al. 2014):
-    σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (2 × d_min²)]
+Per-atom coordinate precision (Helliwell 2023, Eq. 2):
+    σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × √(B_i / B_avg)
     σ(r, B_i) = sqrt(3) × σ(x, B_i)
 
 where:
@@ -536,6 +536,172 @@ class MMCIFParser:
 
 
 # ---------------------------------------------------------------------------
+# Gemmi-based parser (preferred when gemmi is installed)
+# ---------------------------------------------------------------------------
+
+try:
+    import gemmi as _gemmi
+    _GEMMI_AVAILABLE = True
+    _GEMMI_ELEMENT_X = _gemmi.Element('X')  # Sentinel for unknown/unrecognised element
+except ImportError:
+    _gemmi = None  # type: ignore
+    _GEMMI_AVAILABLE = False
+    _GEMMI_ELEMENT_X = None  # type: ignore
+
+
+class GemmiParser:
+    """Parse PDB/mmCIF files using the gemmi library.
+
+    Uses gemmi for atom extraction (both formats) and for refinement params
+    from mmCIF.  For PDB-format files, refinement params fall back to the
+    existing PDBParser._parse_remark3() regex logic since gemmi's PDB
+    REMARK 3 parsing is less complete than its mmCIF support.
+
+    Raises RuntimeError if gemmi is not installed.
+    """
+
+    @classmethod
+    def parse(cls, filepath: str) -> Tuple[List[Atom], RefinementParams]:
+        if not _GEMMI_AVAILABLE:
+            raise RuntimeError(
+                "gemmi is not installed.  Install it with: pip install gemmi"
+            )
+        st = _gemmi.read_structure(filepath)
+        atoms = cls._extract_atoms(st)
+
+        is_cif = filepath.lower().endswith(('.cif', '.mmcif'))
+        if is_cif:
+            doc = _gemmi.cif.read(filepath)
+            params = cls._extract_params_cif(st, doc)
+        else:
+            # PDB format: use existing regex parser for REMARK 3 stats
+            params = RefinementParams(source='PDB REMARK 3 (via GemmiParser)')
+            remark3_lines = []
+            with open(filepath, 'r', errors='replace') as fh:
+                for line in fh:
+                    rec = line[:6].strip()
+                    if rec == 'REMARK' and line[6:10].strip() == '3':
+                        remark3_lines.append(line[10:].rstrip())
+            PDBParser._parse_remark3(remark3_lines, params)
+
+        return atoms, params
+
+    @classmethod
+    def _extract_atoms(cls, st) -> List[Atom]:
+        atoms = []
+        model = st[0]
+        serial = 0
+        for chain in model:
+            for residue in chain:
+                for ga in residue:
+                    serial += 1
+                    alt = ga.altloc if ga.altloc != '\x00' else ''
+                    element = ga.element.name if ga.element != _GEMMI_ELEMENT_X else ''
+                    if not element or element == 'X':
+                        # Fall back to inferring element from atom name; default to 'C' (carbon)
+                        # as it is the most common element in macromolecular structures.
+                        element = re.sub(r'[^A-Za-z]', '', ga.name)[:2].upper() or 'C'
+                    record = 'HETATM' if residue.het_flag == 'H' else 'ATOM'
+                    ins = residue.seqid.icode.strip() if residue.seqid.icode.strip() else ''
+                    try:
+                        seq_num = int(str(residue.seqid.num))
+                    except (ValueError, AttributeError):
+                        seq_num = 0
+                    atoms.append(Atom(
+                        serial=serial,
+                        name=ga.name,
+                        alt_loc=alt,
+                        res_name=residue.name,
+                        chain_id=chain.name,
+                        res_seq=seq_num,
+                        ins_code=ins,
+                        x=ga.pos.x,
+                        y=ga.pos.y,
+                        z=ga.pos.z,
+                        occupancy=ga.occ,
+                        b_iso=ga.b_iso,
+                        element=element.upper(),
+                        record_type=record,
+                    ))
+        return atoms
+
+    @classmethod
+    def _extract_params_cif(cls, st, doc) -> RefinementParams:
+        params = RefinementParams(source='mmCIF (gemmi)')
+
+        # Try structure-level resolution first
+        if st.resolution > 0:
+            params.resolution = st.resolution
+
+        block = doc.sole_block()
+
+        def fval(key):
+            v = block.find_value(key)
+            if v and v not in ('.', '?', ''):
+                try:
+                    return float(v)
+                except ValueError:
+                    pass
+            return None
+
+        def ival(key):
+            v = fval(key)
+            return int(v) if v is not None else None
+
+        def fval_any(keys):
+            for k in keys:
+                v = fval(k)
+                if v is not None:
+                    return v
+            return None
+
+        # Resolution
+        res = fval_any(['_refine.ls_d_res_high', '_reflns.d_resolution_high'])
+        if res is not None:
+            params.resolution = res
+
+        # R_work
+        params.r_work = fval_any([
+            '_refine.ls_r_factor_r_work',
+            '_refine.ls_r_factor_obs',
+            '_refine.ls_r_factor_all',
+        ])
+
+        # R_free
+        params.r_free = fval('_refine.ls_r_factor_r_free')
+
+        # Completeness
+        comp = fval_any([
+            '_reflns.percent_possible_all',
+            '_reflns.pdbx_percent_possible_all',
+            '_reflns.pdbx_percent_possible_obs',
+        ])
+        if comp is not None:
+            params.completeness = comp / 100.0 if comp > 1 else comp
+
+        # N_obs
+        params.n_obs = ival('_refine.ls_number_reflns_obs') or ival('_refine.ls_number_reflns_all')
+
+        # N_free
+        params.n_free = ival('_refine.ls_number_reflns_r_free')
+
+        # N_params
+        params.n_params = ival('_refine.ls_number_parameters')
+
+        # N_atoms
+        n_atoms = ival('_refine_hist.number_atoms_total') or ival('_refine.ls_number_atoms_total')
+        if n_atoms is not None:
+            params.n_atoms_refined = n_atoms
+
+        # Space group
+        sg = block.find_value('_symmetry.space_group_name_h-m') or \
+             block.find_value('_space_group.name_h-m_alt') or ''
+        params.space_group = sg.strip("'\" ") if sg not in ('.', '?') else ''
+
+        return params
+
+
+# ---------------------------------------------------------------------------
 # Phenix log parser
 # ---------------------------------------------------------------------------
 
@@ -682,8 +848,8 @@ class DPICalculator:
     The R_free formula uses n_obs (total observed reflections) as the denominator,
     per Cruickshank (1999) Eq. 31 and Table 3 — NOT N_free (free-set size).
 
-    Per-atom (Gurusaran et al. 2014):
-        σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × exp[(B_i − B_avg) / (2 × d_min²)]
+    Per-atom (Helliwell 2023, Eq. 2):
+        σ(x, B_i) = σ(x, B_avg) × (Z_avg / Z_i) × √(B_i / B_avg)
     """
 
     def __init__(
@@ -841,10 +1007,12 @@ class DPICalculator:
     ) -> List[AtomDPI]:
         result = []
         for atom in working:
-            b_diff = atom.b_iso - b_avg
-            # B-factor exponential correction (Gurusaran et al. 2014, Eq. 6)
-            b_corr = math.exp(b_diff / (2.0 * d_min ** 2))
-            # Atomic number correction (optional)
+            # B-factor correction (Helliwell 2023, Eq. 2): σ(x, Bᵢ) = σ(x, B_avg) × √(Bᵢ / B_avg)
+            if b_avg > 0 and atom.b_iso > 0:
+                b_corr = math.sqrt(atom.b_iso / b_avg)
+            else:
+                b_corr = 1.0
+            # Atomic number correction (optional, from Gurusaran et al. 2014)
             if self.apply_z_correction:
                 z_corr = z_avg / max(atom.atomic_number, 1)
             else:
@@ -1088,7 +1256,9 @@ def main():
     # Parse
     ext = Path(filepath).suffix.lower()
     print(f"\nParsing: {filepath}")
-    if ext in ('.cif', '.mmcif'):
+    if _GEMMI_AVAILABLE:
+        atoms, params = GemmiParser.parse(filepath)
+    elif ext in ('.cif', '.mmcif'):
         atoms, params = MMCIFParser.parse(filepath)
     else:
         atoms, params = PDBParser.parse(filepath)

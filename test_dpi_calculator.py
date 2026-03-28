@@ -378,19 +378,18 @@ class TestParamSanityChecks:
 # Per-atom B-factor exponent (Bug #2)
 # ---------------------------------------------------------------------------
 
-class TestPerAtomBFactorExponent:
-    """Verify per-atom correction uses 2×d_min² denominator (Gurusaran 2014 Eq. 6)."""
+class TestPerAtomBFactorCorrection:
+    """Verify per-atom correction uses √(Bᵢ/B_avg) (Helliwell 2023 Eq. 2)."""
 
     def test_b_factor_scaling(self):
         """
-        For an atom with B_i = B_avg + Δ, the per-atom σ(x) should be
-        σ(x, B_avg) × exp(Δ / (2 × d_min²)).
+        For an atom with Bᵢ = B_avg + Δ, the per-atom σ(x) should be
+        σ(x, B_avg) × √(Bᵢ / B_avg).
         """
         d_min = 2.0
         b_avg = 20.0
-        delta_b = 8.0  # atom has higher B than average
+        delta_b = 8.0  # second atom has higher B than average
 
-        # Two atoms: one at b_avg, one at b_avg + delta_b
         atoms = [
             Atom(serial=1, name='C', alt_loc='', res_name='ALA', chain_id='A',
                  res_seq=1, ins_code='', x=0, y=0, z=0,
@@ -407,18 +406,43 @@ class TestPerAtomBFactorExponent:
         result = calc.calculate_r_based()
         assert result is not None
 
-        sigma_x_avg = result.sigma_x_avg
-        # atom at b_avg: correction = exp(0) = 1
         sigma_x_1 = result.per_atom[0].sigma_x
-        # atom at b_avg + delta_b: correction = exp(delta_b / (2 * d_min^2))
         sigma_x_2 = result.per_atom[1].sigma_x
 
-        expected_ratio = math.exp(delta_b / (2.0 * d_min ** 2))
+        # Helliwell (2023) Eq. 2: ratio = √(B2/B1)
+        expected_ratio = math.sqrt((b_avg + delta_b) / b_avg)
         actual_ratio = sigma_x_2 / sigma_x_1
         assert actual_ratio == pytest.approx(expected_ratio, rel=1e-6), (
             f"Expected per-atom ratio {expected_ratio:.6f}, got {actual_ratio:.6f}. "
-            "Check that denominator is 2×d_min² not 4×d_min²."
+            "Per-atom correction should use √(Bᵢ/B_avg) per Helliwell (2023)."
         )
+
+    def test_high_b_factor_reasonable(self):
+        """Atoms with B=120 vs B_avg=60 should give ~1.41× multiplier, NOT exponential blowup."""
+        b_avg = 60.0
+        b_high = 120.0
+
+        atoms = [
+            Atom(serial=1, name='C', alt_loc='', res_name='ALA', chain_id='A',
+                 res_seq=1, ins_code='', x=0, y=0, z=0,
+                 occupancy=1.0, b_iso=b_avg, element='C', record_type='ATOM'),
+            Atom(serial=2, name='C', alt_loc='', res_name='ALA', chain_id='A',
+                 res_seq=2, ins_code='', x=0, y=0, z=0,
+                 occupancy=1.0, b_iso=b_high, element='C', record_type='ATOM'),
+        ]
+        params = RefinementParams(
+            resolution=2.0, r_work=0.20, completeness=1.0,
+            n_obs=20000, n_params=5000, n_atoms_refined=2,
+        )
+        calc = DPICalculator(atoms, params, apply_z_correction=False)
+        result = calc.calculate_r_based()
+        assert result is not None
+
+        ratio = result.per_atom[1].sigma_x / result.per_atom[0].sigma_x
+        expected = math.sqrt(120.0 / 60.0)  # = 1.414
+        assert ratio == pytest.approx(expected, rel=1e-6)
+        # Ensure it's NOT the exponential form
+        assert ratio < 10.0, f"Per-atom ratio {ratio} is unreasonably large — exponential bug?"
 
     def test_atom_at_b_avg_has_unit_correction(self):
         """Atom at exactly B_avg should have σ(x,Bᵢ) = σ(x, B_avg)."""
@@ -570,10 +594,10 @@ class TestTable3EndToEnd:
         self, tmp_path, pdb_id, label, exp_d_min, exp_rfree_dpi, exp_r_dpi
     ):
         """Download mmCIF from RCSB, parse, compute DPI, compare against Table 3."""
-        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
+        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
 
         filepath = download_pdb(pdb_id, dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = MMCIFParser.parse(filepath)
+        atoms, params = GemmiParser.parse(filepath)
 
         assert atoms, f"{pdb_id}: no atoms parsed from {filepath}"
         assert params.resolution is not None, f"{pdb_id}: resolution not parsed"
@@ -615,10 +639,10 @@ class TestTable3EndToEnd:
     )
     def test_azurin_ii_1ARN_known_mismatch(self, tmp_path):
         """Azurin II (1ARN): document known mismatch between PDB and Cruickshank values."""
-        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
+        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
 
         filepath = download_pdb('1ARN', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = MMCIFParser.parse(filepath)
+        atoms, params = GemmiParser.parse(filepath)
 
         calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
         rfree_result = calc.calculate_rfree_based()
@@ -632,10 +656,10 @@ class TestTable3EndToEnd:
 
     def test_azurin_ii_1ARN_include_hetatm(self, tmp_path):
         """Azurin II (1ARN) has Cu²⁺ (HETATM); verify include_hetatm flag works."""
-        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
+        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
 
         filepath = download_pdb('1ARN', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = MMCIFParser.parse(filepath)
+        atoms, params = GemmiParser.parse(filepath)
 
         calc_with = DPICalculator(atoms, params, include_hetatm=True,  apply_z_correction=False)
         calc_without = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
@@ -679,10 +703,10 @@ class TestTable3EndToEnd:
     )
     def test_immunoglobulin_1BWW_table1_mismatch(self, tmp_path):
         """1BWW (Immunoglobulin, Table 1 only): document known mismatch."""
-        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
+        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
 
         filepath = download_pdb('1BWW', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = MMCIFParser.parse(filepath)
+        atoms, params = GemmiParser.parse(filepath)
 
         calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
         r_result = calc.calculate_r_based()
