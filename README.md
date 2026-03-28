@@ -30,11 +30,14 @@ Isotropic position error:
 σ(r, B_avg) = √3 × σ(x, B_avg)
 ```
 
-**Per-atom precision** (Gurusaran *et al.* 2014, Eq. 6)
+**Per-atom precision** (Helliwell 2023, Eq. 2)
 
 ```
-σ(x, Bᵢ) = σ(x, B_avg) × (Z_avg / Zᵢ) × exp[(Bᵢ − B_avg) / (2 × d_min²)]
+σ(x, Bᵢ) = σ(x, B_avg) × (Z_avg / Zᵢ) × √(Bᵢ / B_avg)
 ```
+
+This gives physically reasonable values (e.g. √(120/60) = 1.41× for a high-B atom),
+unlike the exponential form which can produce absurdly large corrections.
 
 | Symbol | Meaning |
 |--------|---------|
@@ -58,7 +61,19 @@ Isotropic position error:
 
 ## Installation
 
-No package installation is required — just Python 3.8+ with the standard library.
+Install the required dependency:
+
+```bash
+pip install gemmi
+```
+
+Or install all dependencies from the requirements file:
+
+```bash
+pip install -r requirements.txt
+```
+
+Then clone and run:
 
 ```bash
 git clone https://github.com/LifeHasOrder/pdb_dpi.git
