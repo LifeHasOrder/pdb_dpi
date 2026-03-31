@@ -141,11 +141,48 @@
           <div class="dpi-sub" id="r-sigma-x"></div>
         </div>
       </div>
+
+      <!-- Method explanation -->
+      <details class="method-info">
+        <summary>Which DPI should I use?</summary>
+        <div class="method-info-body">
+          <p>
+            <strong>R<sub>free</sub>-based DPI (recommended)</strong> — Uses the free R-factor and
+            total observed reflections (Cruickshank 1999, Eq. 31). R<sub>free</sub> is calculated
+            from reflections excluded from refinement, making it an unbiased estimate of model
+            accuracy. This is generally the more reliable measure, especially when the number of
+            refined parameters is uncertain.
+          </p>
+          <p>
+            <strong>R-based DPI</strong> — Uses the working R-factor and degrees of freedom
+            (N<sub>obs</sub> − N<sub>params</sub>) (Cruickshank 1999, Eq. 24). This was the
+            original DPI formulation and remains useful for historical comparison. However,
+            R<sub>work</sub> can be artificially lowered by over-fitting, and the result depends
+            on knowing N<sub>params</sub> accurately — a value many PDB files don't report,
+            requiring estimation as 4 × N<sub>atoms</sub>.
+          </p>
+          <p>
+            Both methods yield the same per-atom scaling via √(B<sub>i</sub> / B<sub>avg</sub>);
+            they differ only in the overall σ(x, B<sub>avg</sub>) baseline.
+          </p>
+        </div>
+      </details>
     </div>
 
     <!-- Per-atom table -->
     <div class="card">
-      <h2>Per-Atom DPI</h2>
+      <h2>Per-Atom DPI <span id="per-atom-method-label" class="method-label"></span></h2>
+
+      <!-- Method toggle -->
+      <div class="method-toggle" id="method-toggle">
+        <button class="method-toggle-btn" id="toggle-rfree" data-method="rfree">
+          R<sub>free</sub>-based <span class="toggle-badge">recommended</span>
+        </button>
+        <button class="method-toggle-btn" id="toggle-r" data-method="r">
+          R-based
+        </button>
+      </div>
+
       <div class="table-controls">
         <span id="atom-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
         <button class="btn btn-secondary" id="csv-btn">
@@ -219,6 +256,7 @@ let filename = '';
 let lastResults = null;
 let sortCol = 'serial';
 let sortAsc = true;
+let activeMethod = 'rfree'; // 'rfree' or 'r'
 
 // ── Pyodide initialisation ────────────────────────────────────────────────────
 async function initPyodide() {
@@ -341,7 +379,9 @@ json.dumps(_result)
       showError(`Calculation error: ${result.error}`);
     } else {
       renderResults(result);
-      setStatus(`Done. ${result.per_atom.length.toLocaleString()} atoms processed.`);
+      const methodLabel = activeMethod === 'rfree' ? 'Rfree-based' : 'R-based';
+      const atomCount = activePerAtomRows().length;
+      setStatus(`Done. ${atomCount.toLocaleString()} atoms processed (${methodLabel}).`);
     }
   } catch (err) {
     showError(`Unexpected error: ${err.message || err}`);
@@ -357,11 +397,54 @@ function fmt(v, decimals = 4) {
   return Number(v).toFixed(decimals);
 }
 
+function activePerAtomRows() {
+  if (!lastResults) return [];
+  if (activeMethod === 'rfree') {
+    return lastResults.per_atom_rfree && lastResults.per_atom_rfree.length
+      ? lastResults.per_atom_rfree
+      : lastResults.per_atom_r || [];
+  }
+  return lastResults.per_atom_r && lastResults.per_atom_r.length
+    ? lastResults.per_atom_r
+    : lastResults.per_atom_rfree || [];
+}
+
+function updateToggleUI() {
+  const hasRfree = lastResults && lastResults.per_atom_rfree && lastResults.per_atom_rfree.length > 0;
+  const hasR     = lastResults && lastResults.per_atom_r     && lastResults.per_atom_r.length     > 0;
+
+  const btnRfree = document.getElementById('toggle-rfree');
+  const btnR     = document.getElementById('toggle-r');
+
+  btnRfree.disabled = !hasRfree;
+  btnR.disabled     = !hasR;
+
+  if (!hasRfree) btnRfree.title = 'Rfree not available (missing from file)';
+  else           btnRfree.removeAttribute('title');
+  if (!hasR)     btnR.title = 'R-based result unavailable (degrees of freedom \u2264 0)';
+  else           btnR.removeAttribute('title');
+
+  btnRfree.classList.toggle('active', activeMethod === 'rfree');
+  btnR.classList.toggle('active', activeMethod === 'r');
+
+  const label = document.getElementById('per-atom-method-label');
+  label.innerHTML = activeMethod === 'rfree'
+    ? '(R<sub>free</sub>-based)'
+    : '(R-based)';
+}
+
 function renderResults(r) {
+  // Default to rfree if available, otherwise r
+  if (r.per_atom_rfree && r.per_atom_rfree.length > 0) {
+    activeMethod = 'rfree';
+  } else if (r.per_atom_r && r.per_atom_r.length > 0) {
+    activeMethod = 'r';
+  }
   renderWarnings(r.warnings || []);
   renderParams(r.params);
   renderDPISummary(r.r_result, r.rfree_result);
-  renderTable(r.per_atom);
+  updateToggleUI();
+  renderTable(activePerAtomRows());
   document.getElementById('results').classList.add('visible');
   document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -483,7 +566,16 @@ document.getElementById('atom-table').addEventListener('click', (e) => {
     sortCol = col;
     sortAsc = true;
   }
-  renderTable(lastResults.per_atom);
+  renderTable(activePerAtomRows());
+});
+
+// ── Method toggle ─────────────────────────────────────────────────────────────
+document.getElementById('method-toggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.method-toggle-btn[data-method]');
+  if (!btn || btn.disabled || !lastResults) return;
+  activeMethod = btn.dataset.method;
+  updateToggleUI();
+  renderTable(activePerAtomRows());
 });
 
 // ── CSV download ──────────────────────────────────────────────────────────────
@@ -491,15 +583,16 @@ document.getElementById('csv-btn').addEventListener('click', () => {
   if (!lastResults) return;
   const headers = ['serial','chain','res_seq','ins_code','res_name','atom_name',
                    'alt_loc','element','occupancy','b_iso','sigma_x','sigma_r'];
-  const rows = lastResults.per_atom.map(a =>
+  const rows = activePerAtomRows().map(a =>
     headers.map(h => a[h] ?? '').join(',')
   );
+  const methodSuffix = activeMethod === 'rfree' ? '_rfree' : '_r';
   const csv = [headers.join(','), ...rows].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = (filename.replace(/\.[^.]+$/, '') || 'structure') + '_dpi.csv';
+  a.download = (filename.replace(/\.[^.]+$/, '') || 'structure') + '_dpi' + methodSuffix + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 });

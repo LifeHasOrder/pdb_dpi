@@ -772,13 +772,13 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
                 'n_atoms_used': res.n_atoms_used,
             }
 
-        per_atom_rows = []
-        # Use r_result atoms if available, otherwise rfree_result
-        result_with_atoms = r_result or rfree_result
-        if result_with_atoms:
-            for ad in result_with_atoms.per_atom:
+        def _build_per_atom_rows(result):
+            if not result:
+                return []
+            rows = []
+            for ad in result.per_atom:
                 a = ad.atom
-                per_atom_rows.append({
+                rows.append({
                     'serial': a.serial,
                     'chain': a.chain_id,
                     'res_seq': a.res_seq,
@@ -792,6 +792,12 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
                     'sigma_x': round(ad.sigma_x, 4),
                     'sigma_r': round(ad.sigma_r, 4),
                 })
+            return rows
+
+        per_atom_rows_r = _build_per_atom_rows(r_result)
+        per_atom_rows_rfree = _build_per_atom_rows(rfree_result)
+        # Default per_atom to Rfree-based; fall back to R-based if unavailable
+        per_atom_rows = per_atom_rows_rfree or per_atom_rows_r
 
         params_dict = {
             'source': params.source,
@@ -814,6 +820,8 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
             'r_result': _result_to_dict(r_result),
             'rfree_result': _result_to_dict(rfree_result),
             'per_atom': per_atom_rows,
+            'per_atom_r': per_atom_rows_r,
+            'per_atom_rfree': per_atom_rows_rfree,
         }
 
     except Exception as exc:
