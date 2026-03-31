@@ -14,6 +14,8 @@ Cruickshank, D. W. J. (1999). Acta Cryst. D55, 583-601. Tables 1 and 3.
 """
 
 import math
+import sys
+import os
 import pytest
 
 from dpi_calculator import (
@@ -22,6 +24,9 @@ from dpi_calculator import (
     DPICalculator,
     PhenixLogParser,
 )
+
+# Make docs/dpi_core.py importable for calculate_from_file tests
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'docs'))
 
 
 # ---------------------------------------------------------------------------
@@ -974,4 +979,118 @@ class TestTable3EndToEnd:
         exp_r_dpi = 0.221
         assert abs(r_result.sigma_r_avg - exp_r_dpi) / exp_r_dpi < self._E2E_TOL, (
             f"1BWW: σ(r,R) = {r_result.sigma_r_avg:.3f}, expected {exp_r_dpi}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests for docs/dpi_core.py – calculate_from_file include_hetatm wiring
+# ---------------------------------------------------------------------------
+
+# Minimal PDB content with one ATOM and one HETATM record plus enough
+# REMARK 3 data for DPI to compute a result.
+_MINIMAL_PDB_WITH_HETATM = """\
+REMARK   3  RESOLUTION RANGE HIGH (ANGSTROMS) : 2.00
+REMARK   3  R VALUE (WORKING SET) : 0.200
+REMARK   3  FREE R VALUE : 0.240
+REMARK   3  COMPLETENESS FOR RANGE  (%) : 95.0
+REMARK   3  NUMBER OF REFLECTIONS : 10000
+REMARK   3  NUMBER OF PARAMETERS IN REFINEMENT : 5000
+ATOM      1  CA  ALA A   1       1.000   2.000   3.000  1.00 20.00           C
+ATOM      2  CB  ALA A   1       2.000   3.000   4.000  1.00 22.00           C
+HETATM    3  O   HOH A 100       5.000   6.000   7.000  1.00 30.00           O
+END
+"""
+
+
+class TestCalculateFromFileHetAtmOverride:
+    """Verify that calculate_from_file in dpi_core.py honours the include_hetatm override.
+
+    Bug report: the checkbox ``#ov-include-hetatm`` in docs/index.html was not
+    wired — the overrides object omitted ``include_hetatm`` and the Python side
+    hard-coded ``False``.  After the fix the JS adds the field and the Python
+    reads it from the overrides dict.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_dpi_core(self):
+        """Import calculate_from_file from docs/dpi_core.py."""
+        from dpi_core import calculate_from_file
+        self.calculate_from_file = calculate_from_file
+
+    def _run(self, include_hetatm):
+        return self.calculate_from_file(
+            _MINIMAL_PDB_WITH_HETATM,
+            'test.pdb',
+            {'include_hetatm': include_hetatm},
+        )
+
+    def test_hetatm_excluded_when_false(self):
+        """With include_hetatm=False the HETATM water must not appear in per_atom."""
+        result = self._run(False)
+        assert result['success'], result.get('error')
+        hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
+        assert hetatm_rows == [], (
+            "HETATM water (HOH) should be absent when include_hetatm=False; "
+            f"got {hetatm_rows}"
+        )
+
+    def test_hetatm_included_when_true(self):
+        """With include_hetatm=True the HETATM water must appear in per_atom."""
+        result = self._run(True)
+        assert result['success'], result.get('error')
+        hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
+        assert len(hetatm_rows) == 1, (
+            "HETATM water (HOH) should appear exactly once when include_hetatm=True; "
+            f"got {hetatm_rows}"
+        )
+
+    def test_hetatm_string_true_is_coerced(self):
+        """String 'true' from the Pyodide JS→Python boundary is treated as True."""
+        result = self._run('true')
+        assert result['success'], result.get('error')
+        hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
+        assert len(hetatm_rows) == 1, (
+            "String 'true' should be coerced to True; "
+            f"got {hetatm_rows}"
+        )
+
+    def test_hetatm_string_false_is_coerced(self):
+        """String 'false' from the Pyodide JS→Python boundary is treated as False."""
+        result = self._run('false')
+        assert result['success'], result.get('error')
+        hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
+        assert hetatm_rows == [], (
+            "String 'false' should be coerced to False; "
+            f"got {hetatm_rows}"
+        )
+
+    def test_default_is_true_when_key_missing(self):
+        """When include_hetatm is absent from overrides the default is True."""
+        result = self.calculate_from_file(
+            _MINIMAL_PDB_WITH_HETATM,
+            'test.pdb',
+            {},  # no include_hetatm key
+        )
+        assert result['success'], result.get('error')
+        hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
+        assert len(hetatm_rows) == 1, (
+            "Default (key absent) should include HETATM atoms; "
+            f"got {hetatm_rows}"
+        )
+
+    def test_atom_count_differs_between_modes(self):
+        """n_atoms_used should be higher when HETATM is included."""
+        result_with = self._run(True)
+        result_without = self._run(False)
+        assert result_with['success'] and result_without['success']
+        # Use r_result if available, else rfree_result
+        n_with = (
+            result_with['r_result'] or result_with['rfree_result']
+        )['n_atoms_used']
+        n_without = (
+            result_without['r_result'] or result_without['rfree_result']
+        )['n_atoms_used']
+        assert n_with > n_without, (
+            f"include_hetatm=True should use more atoms ({n_with}) "
+            f"than include_hetatm=False ({n_without})"
         )
