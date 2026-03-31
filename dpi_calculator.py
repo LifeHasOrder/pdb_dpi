@@ -871,10 +871,12 @@ class DPICalculator:
         self.scale_factor = scale_factor
 
     def _working_atoms(self) -> List[Atom]:
-        """Atoms included in the DPI calculation.
+        """Atoms included in the overall DPI statistics (B_avg, N_a, Z_avg).
 
         Alternate conformers B, C, … are excluded; only the primary conformer
         (alt_loc == '' or 'A') is kept to avoid inflating N_a and skewing B_avg.
+        Low-occupancy atoms are also excluded so partial occupancies don't bias
+        the average B-factor used in the overall DPI formula.
         """
         result = []
         for a in self.atoms:
@@ -886,6 +888,26 @@ class DPICalculator:
                 continue
             # Exclude non-primary alternate conformers (B, C, …)
             if a.alt_loc not in ('', 'A'):
+                continue
+            result.append(a)
+        return result
+
+    def _output_atoms(self) -> List[Atom]:
+        """Atoms written to the per-atom CSV output.
+
+        Unlike ``_working_atoms()``, this includes *all* alternate conformers
+        (A, B, C, …) and applies no occupancy filter.  Every atom in the
+        structure gets a coordinate-precision estimate in the output, using the
+        same overall σ(x, B_avg) scaled by √(Bᵢ / B_avg) for its own B-factor.
+
+        The hydrogen and HETATM filters still apply so the output remains
+        consistent with the choice of ``include_hydrogens`` / ``include_hetatm``.
+        """
+        result = []
+        for a in self.atoms:
+            if a.is_hydrogen and not self.include_hydrogens:
+                continue
+            if a.record_type == 'HETATM' and not self.include_hetatm:
                 continue
             result.append(a)
         return result
@@ -962,7 +984,8 @@ class DPICalculator:
         sigma_r = math.sqrt(3) * sigma_x
         b_avg = self._b_average(working)
         z_avg = self._z_average(working)
-        per_atom = self._per_atom(working, sigma_x, b_avg, z_avg, p.resolution)
+        output = self._output_atoms()
+        per_atom = self._per_atom(output, sigma_x, b_avg, z_avg, p.resolution)
         return DPIResult(
             params=p, method='R', sigma_x_avg=sigma_x, sigma_r_avg=sigma_r,
             p=dof, b_avg=b_avg, z_avg=z_avg,
@@ -994,7 +1017,8 @@ class DPICalculator:
         sigma_r = math.sqrt(3) * sigma_x
         b_avg = self._b_average(working)
         z_avg = self._z_average(working)
-        per_atom = self._per_atom(working, sigma_x, b_avg, z_avg, p.resolution)
+        output = self._output_atoms()
+        per_atom = self._per_atom(output, sigma_x, b_avg, z_avg, p.resolution)
         return DPIResult(
             params=p, method='Rfree', sigma_x_avg=sigma_x, sigma_r_avg=sigma_r,
             p=None, b_avg=b_avg, z_avg=z_avg,
