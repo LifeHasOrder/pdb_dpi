@@ -92,9 +92,13 @@
       </div>
       <div class="field-group" style="grid-column: 1 / -1; margin-top: 0.5rem;">
         <label>
-          <input type="checkbox" id="ov-include-hetatm" checked />
+          <input type="checkbox" id="ov-include-hetatm" />
           Include HETATM records (waters, ligands, metals) in calculation
         </label>
+      </div>
+      <div class="field-group" style="margin-top: 0.5rem;">
+        <label for="ov-scale-factor">Scale factor (typically 0.65 or 1.0; Cruickshank recommends 1.0)</label>
+        <input type="number" id="ov-scale-factor" placeholder="default: 1.0" step="0.01" min="0.1" max="2.0" />
       </div>
     </details>
 
@@ -109,6 +113,9 @@
 
   <!-- Error -->
   <div id="error-box" role="alert"></div>
+
+  <!-- Warnings -->
+  <div id="warnings-box" role="status"></div>
 
   <!-- Results -->
   <div id="results">
@@ -313,6 +320,7 @@ document.getElementById('calc-btn').addEventListener('click', async () => {
     n_params:        document.getElementById('ov-n-params').value,
     n_atoms:         document.getElementById('ov-n-atoms').value,
     include_hetatm:  document.getElementById('ov-include-hetatm').checked,
+    scale_factor:    document.getElementById('ov-scale-factor').value,
   };
 
   try {
@@ -350,11 +358,24 @@ function fmt(v, decimals = 4) {
 }
 
 function renderResults(r) {
+  renderWarnings(r.warnings || []);
   renderParams(r.params);
   renderDPISummary(r.r_result, r.rfree_result);
   renderTable(r.per_atom);
   document.getElementById('results').classList.add('visible');
   document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderWarnings(warnings) {
+  const box = document.getElementById('warnings-box');
+  if (!warnings || warnings.length === 0) {
+    box.classList.remove('visible');
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = '<strong>⚠ Warnings:</strong><ul>' +
+    warnings.map(w => `<li>${w}</li>`).join('') + '</ul>';
+  box.classList.add('visible');
 }
 
 function renderParams(p) {

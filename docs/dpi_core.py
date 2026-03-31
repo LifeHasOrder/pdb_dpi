@@ -123,10 +123,12 @@ class PDBParser:
         'resolution': [
             r'RESOLUTION RANGE HIGH \(ANGSTROMS\)\s*:\s*([\d.]+)',
             r'RESOLUTION\s*[:(]\s*([\d.]+)',
+            r'HIGHEST RESOLUTION SHELL.*?:\s*([\d.]+)',
         ],
         'r_work': [
             r'R VALUE\s+\(WORKING SET\)\s*:\s*([\d.]+)',
             r'R VALUE\s+\(WORKING\)\s*:\s*([\d.]+)',
+            r'^REMARK   3   R VALUE\s*\(WORKING\)\s*:\s*([\d.]+)',
             r'R VALUE\s+\(WORKING SET,\s*NO CUTOFF\)\s*:\s*([\d.]+)',
         ],
         'r_free': [
@@ -136,13 +138,29 @@ class PDBParser:
         'completeness': [
             r'COMPLETENESS FOR RANGE\s*\(%\)\s*:\s*([\d.]+)',
             r'COMPLETENESS\s*\(%\)\s*:\s*([\d.]+)',
+            r'COMPLETENESS\s*:\s*([\d.]+)',
         ],
         'n_obs': [
             r'NUMBER OF REFLECTIONS\s*:\s*(\d+)',
             r'REFLECTIONS USED IN REFINEMENT\s*:\s*(\d+)',
+            r'USED IN REFINEMENT\s*:\s*(\d+)',
+        ],
+        'n_free': [
+            r'FREE R VALUE TEST SET SIZE\s*\(%\)\s*:\s*([\d.]+)',  # % — handle separately
+            r'NUMBER OF FREE REFLECTIONS\s*:\s*(\d+)',
+            r'FREE R SET COUNT\s*:\s*(\d+)',
+            r'FREE R VALUE TEST SET COUNT\s*:\s*(\d+)',
         ],
         'n_params': [
             r'NUMBER OF PARAMETERS IN REFINEMENT\s*:\s*(\d+)',
+            r'PARAMETERS\s*:\s*(\d+)',
+        ],
+        'n_atoms': [
+            r'TOTAL NUMBER OF ATOMS\s*:\s*(\d+)',
+            r'PROTEIN ATOMS\s*:\s*(\d+)',
+        ],
+        'r_free_pct': [
+            r'FREE R VALUE TEST SET SIZE\s*\(%\)\s*:\s*([\d.]+)',
         ],
     }
 
@@ -238,22 +256,28 @@ class PDBParser:
         if n_params:
             params.n_params = int(n_params)
 
-        n_free = None
+        # n_free: look for explicit count first, then % of n_obs
+        n_free_direct = None
         for pat in [
             r'FREE R VALUE TEST SET COUNT\s*:\s*(\d+)',
             r'NUMBER OF FREE REFLECTIONS\s*:\s*(\d+)',
+            r'FREE R SET COUNT\s*:\s*(\d+)',
         ]:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                n_free = int(m.group(1))
+                n_free_direct = int(m.group(1))
                 break
-        if n_free:
-            params.n_free = n_free
+        if n_free_direct:
+            params.n_free = n_free_direct
         else:
             pct_m = re.search(
                 r'FREE R VALUE TEST SET SIZE\s*\(%\)\s*:\s*([\d.]+)', text, re.IGNORECASE)
             if pct_m and params.n_obs:
                 params.n_free = int(round(float(pct_m.group(1)) / 100.0 * params.n_obs))
+
+        n_atoms = find(cls._REMARK3_PATTERNS['n_atoms'])
+        if n_atoms:
+            params.n_atoms_refined = int(n_atoms)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +502,7 @@ class DPICalculator:
         include_hydrogens: bool = False,
         min_occupancy: float = 0.5,
         apply_z_correction: bool = True,
+        scale_factor: float = 1.0,
     ):
         self.atoms = atoms
         self.params = params
@@ -485,6 +510,7 @@ class DPICalculator:
         self.include_hydrogens = include_hydrogens
         self.min_occupancy = min_occupancy
         self.apply_z_correction = apply_z_correction
+        self.scale_factor = scale_factor
 
     def _working_atoms(self) -> List[Atom]:
         result = []
@@ -524,18 +550,67 @@ class DPICalculator:
     def _n_atoms(self, working_atoms: List[Atom]) -> int:
         return self.params.n_atoms_refined or len(working_atoms)
 
-    def calculate_r_based(self) -> Optional[DPIResult]:
+    def _check_params(self) -> List[str]:
+        """Return warnings for suspicious refinement parameter values."""
+        warnings = []
+        p = self.params
+        if p.r_work is not None and p.r_free is not None:
+            if p.r_work > p.r_free:
+                warnings.append(
+                    f"R_work ({p.r_work:.4f}) > R_free ({p.r_free:.4f}) — "
+                    f"this is unusual and may indicate a parsing error."
+                )
+        if p.r_work is not None:
+            if p.r_work > 0.6:
+                warnings.append(
+                    f"R_work ({p.r_work:.4f}) > 0.6 — likely a parsing error "
+                    f"or structure is not properly refined."
+                )
+            elif p.r_work < 0.01:
+                warnings.append(f"R_work ({p.r_work:.4f}) < 0.01 — likely a parsing error.")
+        if p.completeness is not None and p.completeness < 0.5:
+            warnings.append(
+                f"Data completeness ({p.completeness:.1%}) < 50% — "
+                f"DPI values may be unreliable."
+            )
+        if p.resolution is None:
+            warnings.append("Resolution (d_min) is missing; DPI cannot be computed.")
+        elif p.resolution <= 0 or p.resolution > 10:
+            warnings.append(f"Resolution ({p.resolution} Å) appears unreasonable.")
+        return warnings
+
+    def _estimate_n_params(self, n_atoms: int) -> Tuple[int, str]:
+        """Auto-estimate N_params when not reported.
+
+        Standard approximation:
+            isotropic B:   N_params ≈ 4 × N_atoms  (x, y, z, B per atom)
+            anisotropic B: N_params ≈ 10 × N_atoms (x, y, z, 6×Uij, occ per atom)
+        """
+        estimated = 4 * n_atoms
+        note = (
+            f"N_params not found in file; auto-estimating as "
+            f"4 × N_atoms = {estimated} (isotropic B assumption). "
+            f"Override in Advanced Options if needed."
+        )
+        return estimated, note
+
+    def calculate_r_based(self) -> Tuple[Optional['DPIResult'], List[str]]:
+        warnings: List[str] = self._check_params()
         p = self.params
         if p.r_work is None or p.resolution is None or p.n_obs is None:
-            return None
+            return None, warnings
         working = self._working_atoms()
         n_a = self._n_atoms(working)
-        n_params = p.n_params if p.n_params is not None else 4 * n_a
+        n_params = p.n_params
+        if n_params is None:
+            n_params, note = self._estimate_n_params(n_a)
+            warnings.append(note)
         dof = p.n_obs - n_params
         if dof <= 0:
-            return None
+            warnings.append("p = N_obs − N_params ≤ 0; R-based DPI is not valid. Use R_free formula.")
+            return None, warnings
         comp = p.completeness or 1.0
-        sigma_x = math.sqrt(n_a / dof) * (comp ** (-1/3)) * p.r_work * p.resolution
+        sigma_x = self.scale_factor * math.sqrt(n_a / dof) * (comp ** (-1/3)) * p.r_work * p.resolution
         sigma_r = math.sqrt(3) * sigma_x
         b_avg = self._b_average(working)
         z_avg = self._z_average(working)
@@ -545,16 +620,17 @@ class DPICalculator:
             params=p, method='R', sigma_x_avg=sigma_x, sigma_r_avg=sigma_r,
             p=dof, b_avg=b_avg, z_avg=z_avg,
             n_atoms_used=len(working), per_atom=per_atom,
-        )
+        ), warnings
 
-    def calculate_rfree_based(self) -> Optional[DPIResult]:
+    def calculate_rfree_based(self) -> Tuple[Optional['DPIResult'], List[str]]:
+        warnings: List[str] = []
         p = self.params
         if p.r_free is None or p.resolution is None or p.n_obs is None:
-            return None
+            return None, warnings
         working = self._working_atoms()
         n_a = p.n_atoms_refined or len(working)
         comp = p.completeness or 1.0
-        sigma_x = math.sqrt(n_a / p.n_obs) * (comp ** (-1/3)) * p.r_free * p.resolution
+        sigma_x = self.scale_factor * math.sqrt(n_a / p.n_obs) * (comp ** (-1/3)) * p.r_free * p.resolution
         sigma_r = math.sqrt(3) * sigma_x
         b_avg = self._b_average(working)
         z_avg = self._z_average(working)
@@ -564,7 +640,7 @@ class DPICalculator:
             params=p, method='Rfree', sigma_x_avg=sigma_x, sigma_r_avg=sigma_r,
             p=None, b_avg=b_avg, z_avg=z_avg,
             n_atoms_used=len(working), per_atom=per_atom,
-        )
+        ), warnings
 
     def _per_atom(
         self, atoms: List[Atom], sigma_x_avg: float, b_avg: float, z_avg: float
@@ -666,14 +742,22 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
         if ov_n_atoms is not None:
             params.n_atoms_refined = ov_n_atoms
 
-        include_hetatm = overrides.get('include_hetatm', True)
+        include_hetatm = overrides.get('include_hetatm', False)
         # Pyodide JS→Python conversion may deliver booleans as strings
         if isinstance(include_hetatm, str):
             include_hetatm = include_hetatm.lower() in ('true', '1', 'yes')
 
-        calc = DPICalculator(atoms, params, include_hetatm=include_hetatm, apply_z_correction=False)
-        r_result = calc.calculate_r_based()
-        rfree_result = calc.calculate_rfree_based()
+        scale_factor = 1.0
+        ov_scale = _maybe_float('scale_factor')
+        if ov_scale is not None:
+            scale_factor = ov_scale
+
+        calc = DPICalculator(atoms, params, include_hetatm=include_hetatm, apply_z_correction=True, scale_factor=scale_factor)
+        r_result, r_warnings = calc.calculate_r_based()
+        rfree_result, rfree_warnings = calc.calculate_rfree_based()
+
+        # Combine and deduplicate warnings, preserving order (Python 3.7+)
+        all_warnings = list(dict.fromkeys(r_warnings + rfree_warnings))
 
         def _result_to_dict(res):
             if res is None:
@@ -725,6 +809,7 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
         return {
             'success': True,
             'error': None,
+            'warnings': all_warnings,
             'params': params_dict,
             'r_result': _result_to_dict(r_result),
             'rfree_result': _result_to_dict(rfree_result),

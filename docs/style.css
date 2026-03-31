@@ -319,6 +319,29 @@ details.advanced[open] summary::before {
   display: block;
 }
 
+#warnings-box {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  color: #92400e;
+  font-size: 0.9rem;
+  display: none;
+}
+
+#warnings-box.visible {
+  display: block;
+}
+
+#warnings-box ul {
+  margin: 0.4rem 0 0 1.2rem;
+  padding: 0;
+}
+
+#warnings-box li {
+  margin-bottom: 0.2rem;
+}
+
 /* ── Results ── */
 #results {
   display: none;
