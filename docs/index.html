@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Calculate Cruickshank Diffraction Precision Index (DPI) per-atom coordinate precision for protein crystal structures. Upload PDB or mmCIF files." />
+  <title>DPI Calculator — Per-Atom Coordinate Precision for Crystal Structures</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.4/full/pyodide.js"></script>
+</head>
+<body>
+
+<!-- Pyodide loading overlay -->
+<div id="pyodide-loading">
+  <div class="big-spinner"></div>
+  <p>Loading Python runtime (Pyodide)…</p>
+</div>
+
+<header>
+  <h1>DPI Calculator</h1>
+  <p>Per-Atom Coordinate Precision for Protein Crystal Structures</p>
+</header>
+
+<main>
+
+  <!-- Introduction -->
+  <div class="card intro">
+    <p>
+      The <strong>Diffraction Precision Index (DPI)</strong> estimates the coordinate uncertainty
+      σ(x) for each atom in a crystal structure, based on the crystallographic R-factor,
+      resolution, data completeness, and the number of observations and refined parameters.
+    </p>
+    <p>
+      Overall DPI is computed from Cruickshank (1999) Eqs. 24 &amp; 31. Per-atom precision
+      is scaled by √(B<sub>i</sub> / B<sub>avg</sub>) per Helliwell (2023) Eq. 2.
+      See <a href="#references">references</a> below.
+    </p>
+    <p>
+      All computation happens <strong>entirely in your browser</strong> via
+      <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.
+      No data is uploaded to any server.
+    </p>
+  </div>
+
+  <!-- Upload card -->
+  <div class="card">
+    <h2>1. Upload Structure File</h2>
+
+    <div id="drop-zone" role="button" tabindex="0" aria-label="Drop structure file here or click to browse">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+          d="M3 16.5V19a2 2 0 002 2h14a2 2 0 002-2v-2.5M16 10l-4-4m0 0L8 10m4-4v12" />
+      </svg>
+      <p>Drag &amp; drop a <strong>.pdb</strong>, <strong>.cif</strong>, or <strong>.mmcif</strong> file here</p>
+      <p>or <strong id="browse-link">click to browse</strong></p>
+      <div id="file-info"></div>
+    </div>
+    <input type="file" id="file-input" accept=".pdb,.cif,.mmcif" />
+
+    <!-- Advanced options -->
+    <details class="advanced">
+      <summary>Advanced Options — manual parameter overrides</summary>
+      <div class="advanced-grid">
+        <div class="field-group">
+          <label for="ov-resolution">Resolution (Å)</label>
+          <input type="number" id="ov-resolution" placeholder="e.g. 2.00" step="0.01" min="0.1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-r-work">R_work</label>
+          <input type="number" id="ov-r-work" placeholder="e.g. 0.215" step="0.001" min="0" max="1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-r-free">R_free</label>
+          <input type="number" id="ov-r-free" placeholder="e.g. 0.258" step="0.001" min="0" max="1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-completeness">Completeness (0–1)</label>
+          <input type="number" id="ov-completeness" placeholder="e.g. 0.97" step="0.01" min="0" max="1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-n-obs">N_obs (reflections)</label>
+          <input type="number" id="ov-n-obs" placeholder="e.g. 15000" step="1" min="1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-n-params">N_params</label>
+          <input type="number" id="ov-n-params" placeholder="e.g. 8000" step="1" min="1" />
+        </div>
+        <div class="field-group">
+          <label for="ov-n-atoms">N_atoms (refined)</label>
+          <input type="number" id="ov-n-atoms" placeholder="e.g. 2000" step="1" min="1" />
+        </div>
+      </div>
+    </details>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="calc-btn" disabled>
+        <span id="calc-spinner" class="spinner"></span>
+        Calculate DPI
+      </button>
+      <div id="status-bar"></div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box" role="alert"></div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Parameters summary -->
+    <div class="card">
+      <h2>Refinement Parameters</h2>
+      <div class="params-grid" id="params-grid"></div>
+    </div>
+
+    <!-- Overall DPI -->
+    <div class="card">
+      <h2>Overall DPI Summary</h2>
+      <div class="dpi-summary">
+        <div class="dpi-box" id="box-rfree">
+          <h3>R<sub>free</sub>-based DPI</h3>
+          <div class="dpi-value" id="rfree-sigma-r">—</div>
+          <div class="dpi-sub" id="rfree-sigma-x"></div>
+        </div>
+        <div class="dpi-box" id="box-r">
+          <h3>R-based DPI</h3>
+          <div class="dpi-value" id="r-sigma-r">—</div>
+          <div class="dpi-sub" id="r-sigma-x"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-atom table -->
+    <div class="card">
+      <h2>Per-Atom DPI</h2>
+      <div class="table-controls">
+        <span id="atom-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        <button class="btn btn-secondary" id="csv-btn">
+          ⬇ Download CSV
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table id="atom-table">
+          <thead>
+            <tr>
+              <th data-col="serial">Serial<span class="sort-arrow"></span></th>
+              <th data-col="chain">Chain<span class="sort-arrow"></span></th>
+              <th data-col="res_seq">Seq<span class="sort-arrow"></span></th>
+              <th data-col="res_name">Res<span class="sort-arrow"></span></th>
+              <th data-col="atom_name">Atom<span class="sort-arrow"></span></th>
+              <th data-col="alt_loc">Alt<span class="sort-arrow"></span></th>
+              <th data-col="element">Elem<span class="sort-arrow"></span></th>
+              <th data-col="occupancy">Occ<span class="sort-arrow"></span></th>
+              <th data-col="b_iso">B (Ų)<span class="sort-arrow"></span></th>
+              <th data-col="sigma_x">σ(x) Å<span class="sort-arrow"></span></th>
+              <th data-col="sigma_r">σ(r) Å<span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="atom-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- #results -->
+
+  <!-- References -->
+  <div class="card intro" id="references">
+    <h2>References</h2>
+    <p>
+      <strong>Cruickshank, D. W. J.</strong> (1999).
+      Remarks about protein structure precision.
+      <em>Acta Cryst.</em> D55, 583–601.
+      <a href="https://doi.org/10.1107/S0907444998012645" target="_blank" rel="noopener">doi:10.1107/S0907444998012645</a>
+    </p>
+    <p>
+      <strong>Gurusaran, M. et al.</strong> (2014).
+      Online_DPI: a web server to calculate the diffraction precision index for a protein structure.
+      <em>IUCrJ</em> 1, 74–81.
+      <a href="https://doi.org/10.1107/S2052252513031485" target="_blank" rel="noopener">doi:10.1107/S2052252513031485</a>
+    </p>
+    <p>
+      <strong>Helliwell, J. R.</strong> (2023).
+      Reporting coordinate precision of protein crystal structure models.
+      <em>Curr. Res. Struct. Biol.</em> 6, 100111.
+      <a href="https://doi.org/10.1016/j.crstbi.2023.100111" target="_blank" rel="noopener">doi:10.1016/j.crstbi.2023.100111</a>
+    </p>
+  </div>
+
+</main>
+
+<footer>
+  <p>
+    Source code on
+    <a href="https://github.com/LifeHasOrder/pdb_dpi" target="_blank" rel="noopener">GitHub — LifeHasOrder/pdb_dpi</a>.
+    Calculations run entirely in your browser via
+    <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.
+    No data is sent to any server.
+  </p>
+</footer>
+
+<script>
+// ── Globals ──────────────────────────────────────────────────────────────────
+let pyodide = null;
+let fileContent = null;
+let filename = '';
+let lastResults = null;
+let sortCol = 'serial';
+let sortAsc = true;
+
+// ── Pyodide initialisation ────────────────────────────────────────────────────
+async function initPyodide() {
+  try {
+    pyodide = await loadPyodide();
+    // Load dpi_core.py source via fetch (same directory)
+    const resp = await fetch('dpi_core.py');
+    if (!resp.ok) throw new Error(`Failed to fetch dpi_core.py: ${resp.status}`);
+    const dpiCoreCode = await resp.text();
+    pyodide.runPython(dpiCoreCode);
+    document.getElementById('pyodide-loading').style.display = 'none';
+    setStatus('Python runtime ready. Upload a file to begin.');
+    updateCalcBtn();
+  } catch (err) {
+    document.getElementById('pyodide-loading').innerHTML =
+      `<p style="color:var(--danger);padding:2rem">Failed to load Pyodide: ${err.message}</p>`;
+  }
+}
+
+// ── File handling ─────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const fileInfo  = document.getElementById('file-info');
+
+document.getElementById('browse-link').addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('click', (e) => {
+  if (e.target.id !== 'browse-link') fileInput.click();
+});
+dropZone.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') fileInput.click();
+});
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  filename = file.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    fileContent = e.target.result;
+    fileInfo.textContent = `✓ ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    updateCalcBtn();
+    setStatus('File loaded. Click "Calculate DPI" to run.');
+  };
+  reader.onerror = () => showError('Failed to read file.');
+  reader.readAsText(file);
+}
+
+function updateCalcBtn() {
+  document.getElementById('calc-btn').disabled = !(pyodide && fileContent);
+}
+
+// ── Status & error helpers ────────────────────────────────────────────────────
+function setStatus(msg) {
+  const bar = document.getElementById('status-bar');
+  bar.textContent = msg;
+  bar.classList.add('visible');
+}
+
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = msg;
+  box.classList.add('visible');
+  document.getElementById('results').classList.remove('visible');
+}
+
+function clearError() {
+  document.getElementById('error-box').classList.remove('visible');
+}
+
+// ── Calculate ─────────────────────────────────────────────────────────────────
+document.getElementById('calc-btn').addEventListener('click', async () => {
+  clearError();
+  const spinner = document.getElementById('calc-spinner');
+  const btn = document.getElementById('calc-btn');
+  btn.disabled = true;
+  spinner.classList.add('active');
+  setStatus('Running calculation…');
+
+  // Gather overrides
+  const overrides = {
+    resolution:   document.getElementById('ov-resolution').value,
+    r_work:       document.getElementById('ov-r-work').value,
+    r_free:       document.getElementById('ov-r-free').value,
+    completeness: document.getElementById('ov-completeness').value,
+    n_obs:        document.getElementById('ov-n-obs').value,
+    n_params:     document.getElementById('ov-n-params').value,
+    n_atoms:      document.getElementById('ov-n-atoms').value,
+  };
+
+  try {
+    // Pass data to Python via globals
+    pyodide.globals.set('_file_content', fileContent);
+    pyodide.globals.set('_filename', filename);
+    pyodide.globals.set('_overrides', pyodide.toPy(overrides));
+
+    const resultJs = pyodide.runPython(`
+import json
+_result = calculate_from_file(_file_content, _filename, _overrides.to_py())
+json.dumps(_result)
+`);
+    const result = JSON.parse(resultJs);
+    lastResults = result;
+
+    if (!result.success) {
+      showError(`Calculation error: ${result.error}`);
+    } else {
+      renderResults(result);
+      setStatus(`Done. ${result.per_atom.length.toLocaleString()} atoms processed.`);
+    }
+  } catch (err) {
+    showError(`Unexpected error: ${err.message || err}`);
+  } finally {
+    btn.disabled = false;
+    spinner.classList.remove('active');
+  }
+});
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+function fmt(v, decimals = 4) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toFixed(decimals);
+}
+
+function renderResults(r) {
+  renderParams(r.params);
+  renderDPISummary(r.r_result, r.rfree_result);
+  renderTable(r.per_atom);
+  document.getElementById('results').classList.add('visible');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderParams(p) {
+  const grid = document.getElementById('params-grid');
+  const items = [
+    ['Resolution (d_min)', p.resolution != null ? `${fmt(p.resolution, 2)} Å` : null],
+    ['R_work',             p.r_work    != null ? fmt(p.r_work, 4)             : null],
+    ['R_free',             p.r_free    != null ? fmt(p.r_free, 4)             : null],
+    ['Completeness',       p.completeness != null ? `${(p.completeness * 100).toFixed(1)}%` : null],
+    ['N_obs',              p.n_obs     != null ? p.n_obs.toLocaleString()      : null],
+    ['N_params',           p.n_params  != null ? p.n_params.toLocaleString()   : null],
+    ['N_atoms (refined)',  p.n_atoms_refined != null ? p.n_atoms_refined.toLocaleString() : null],
+    ['Atoms parsed',       p.n_atoms_parsed != null ? p.n_atoms_parsed.toLocaleString()   : null],
+    ['Space group',        p.space_group || null],
+    ['Source',             p.source || null],
+  ];
+
+  grid.innerHTML = items.map(([label, val]) => `
+    <div class="param-item">
+      <span class="param-label">${label}</span>
+      <span class="param-value ${val == null ? 'missing' : ''}">${val ?? 'N/A'}</span>
+    </div>
+  `).join('');
+}
+
+function renderDPISummary(rRes, rfreeRes) {
+  function fill(boxId, srId, sxId, res) {
+    const box = document.getElementById(boxId);
+    const srEl = document.getElementById(srId);
+    const sxEl = document.getElementById(sxId);
+    if (res) {
+      srEl.innerHTML = `${fmt(res.sigma_r_avg, 3)}<span class="dpi-unit">Å</span>`;
+      sxEl.textContent = `σ(x) = ${fmt(res.sigma_x_avg, 4)} Å  |  N_atoms = ${res.n_atoms_used.toLocaleString()}`;
+      box.classList.remove('unavailable');
+    } else {
+      srEl.textContent = 'N/A';
+      sxEl.textContent = 'Parameters not available in file';
+      box.classList.add('unavailable');
+    }
+  }
+  fill('box-rfree', 'rfree-sigma-r', 'rfree-sigma-x', rfreeRes);
+  fill('box-r',     'r-sigma-r',     'r-sigma-x',     rRes);
+}
+
+// ── Table rendering & sorting ─────────────────────────────────────────────────
+function dpiClass(sigmaR) {
+  if (sigmaR < 0.3) return 'dpi-low';
+  if (sigmaR < 0.7) return 'dpi-mid';
+  return 'dpi-high';
+}
+
+function renderTable(rows) {
+  document.getElementById('atom-count').textContent =
+    `${rows.length.toLocaleString()} atoms`;
+
+  const tbody = document.getElementById('atom-tbody');
+  tbody.innerHTML = sortedRows(rows).map(rowHtml).join('');
+
+  // Update sort indicators
+  document.querySelectorAll('#atom-table th').forEach(th => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+    if (th.dataset.col === sortCol) {
+      th.classList.add(sortAsc ? 'sorted-asc' : 'sorted-desc');
+    }
+  });
+}
+
+function rowHtml(a) {
+  const cls = dpiClass(a.sigma_r);
+  return `<tr>
+    <td>${a.serial}</td>
+    <td>${a.chain}</td>
+    <td>${a.res_seq}${a.ins_code || ''}</td>
+    <td>${a.res_name}</td>
+    <td>${a.atom_name}</td>
+    <td>${a.alt_loc || ''}</td>
+    <td>${a.element}</td>
+    <td>${a.occupancy.toFixed(2)}</td>
+    <td>${a.b_iso.toFixed(2)}</td>
+    <td class="dpi-cell ${cls}">${a.sigma_x.toFixed(4)}</td>
+    <td class="dpi-cell ${cls}">${a.sigma_r.toFixed(4)}</td>
+  </tr>`;
+}
+
+function sortedRows(rows) {
+  const col = sortCol;
+  return [...rows].sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 :  1;
+    if (va > vb) return sortAsc ?  1 : -1;
+    return 0;
+  });
+}
+
+// Column sort click
+document.getElementById('atom-table').addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-col]');
+  if (!th || !lastResults) return;
+  const col = th.dataset.col;
+  if (col === sortCol) {
+    sortAsc = !sortAsc;
+  } else {
+    sortCol = col;
+    sortAsc = true;
+  }
+  renderTable(lastResults.per_atom);
+});
+
+// ── CSV download ──────────────────────────────────────────────────────────────
+document.getElementById('csv-btn').addEventListener('click', () => {
+  if (!lastResults) return;
+  const headers = ['serial','chain','res_seq','ins_code','res_name','atom_name',
+                   'alt_loc','element','occupancy','b_iso','sigma_x','sigma_r'];
+  const rows = lastResults.per_atom.map(a =>
+    headers.map(h => a[h] ?? '').join(',')
+  );
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = (filename.replace(/\.[^.]+$/, '') || 'structure') + '_dpi.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+initPyodide();
+</script>
+
+</body>
+</html>
