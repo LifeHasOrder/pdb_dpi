@@ -437,6 +437,117 @@ details.advanced[open] summary::before {
   opacity: 0.55;
 }
 
+/* ── Method explanation panel ── */
+.method-info {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.method-info summary {
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.method-info summary::before {
+  content: '▶';
+  font-size: 0.65rem;
+  transition: transform 0.2s;
+}
+
+.method-info[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.method-info-body {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.method-info-body strong {
+  color: var(--text);
+}
+
+/* ── Method toggle (segmented control) ── */
+.method-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 0.85rem;
+}
+
+.method-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+
+.method-toggle-btn:not(:first-child) {
+  border-left: 1px solid var(--border);
+}
+
+.method-toggle-btn:hover:not(:disabled):not(.active) {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.method-toggle-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.method-toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toggle-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(255,255,255,0.25);
+  padding: 0.1em 0.45em;
+  border-radius: 4px;
+}
+
+.method-toggle-btn:not(.active) .toggle-badge {
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+.method-label {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.4rem;
+}
+
 /* ── Per-atom table ── */
 .table-controls {
   display: flex;
