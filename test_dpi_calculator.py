@@ -1064,8 +1064,8 @@ class TestCalculateFromFileHetAtmOverride:
             f"got {hetatm_rows}"
         )
 
-    def test_default_is_true_when_key_missing(self):
-        """When include_hetatm is absent from overrides the default is True."""
+    def test_default_is_false_when_key_missing(self):
+        """When include_hetatm is absent from overrides the default is False (matching CLI)."""
         result = self.calculate_from_file(
             _MINIMAL_PDB_WITH_HETATM,
             'test.pdb',
@@ -1073,8 +1073,8 @@ class TestCalculateFromFileHetAtmOverride:
         )
         assert result['success'], result.get('error')
         hetatm_rows = [r for r in result['per_atom'] if r['res_name'] == 'HOH']
-        assert len(hetatm_rows) == 1, (
-            "Default (key absent) should include HETATM atoms; "
+        assert hetatm_rows == [], (
+            "Default (key absent) should exclude HETATM atoms (matching CLI default); "
             f"got {hetatm_rows}"
         )
 
