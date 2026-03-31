@@ -729,7 +729,7 @@ class TestTable3EndToEnd:
     | HEW lysozyme (ground) | 193L   | Vaney et al. (1996)       | ✅ should match  |
     | HEW lysozyme (space)  | 194L   | Vaney et al. (1996)       | ✅ should match  |
     | γB-crystallin         | 1GCS   | Tickle et al. (1998a)     | ✅ should match  |
-    | βB2-crystallin        | 2BB2   | Tickle et al. (1998a)     | ✅ should match  |
+    | βB2-crystallin        | 2BB2   | Tickle et al. (1998a)     | ⚠️ missing n_obs |
     | β-purothionin         | 1BHP   | Stec, Rao et al. (1995)   | ✅ should match  |
     | α₁-purothionin        | 2PLH   | Rao et al. (1995)         | ✅ should match  |
     | EM lysozyme           | 1JUG   | Guss et al. (1997)        | ✅ should match  |
@@ -770,8 +770,9 @@ class TestTable3EndToEnd:
         # within the 15% e2e tolerance.
         ('193L', 'HEW lys ground',     1.33, 0.12,  0.11,  True),
         ('194L', 'HEW lys space',      1.40, 0.13,  0.12,  True),
-        ('2BB2', 'betaB2-crystallin',  2.10, 0.22,  0.25,  False),
-        # 2BB2: R_free not stored in deposited mmCIF (pre-2000 deposition).
+        # 2BB2 (βB2-crystallin) is moved to a dedicated xfail test below because
+        # the deposited mmCIF lacks n_obs and n_params; R-based DPI cannot be
+        # computed from the deposited file alone.
         ('1BHP', 'beta-purothionin',   1.70, 0.26,  0.22,  True),
         ('2PLH', 'alpha1-purothionin', 2.50, 0.68,  None,  False),
         # 2PLH: R_free not stored in deposited mmCIF; R-based DPI undefined (p≤0).
@@ -882,6 +883,28 @@ class TestTable3EndToEnd:
         exp_rfree_dpi = 0.23
         assert abs(rfree_result.sigma_r_avg - exp_rfree_dpi) / exp_rfree_dpi < self._E2E_TOL, (
             f"1ARN: σ(r,Rfree) = {rfree_result.sigma_r_avg:.3f}, expected {exp_rfree_dpi}"
+        )
+
+    @pytest.mark.xfail(
+        reason=(
+            "2BB2 deposited mmCIF lacks n_obs and n_params; DPI cannot be computed "
+            "from deposited file alone."
+        ),
+        strict=False,
+    )
+    def test_betab2_crystallin_2BB2_missing_params(self, tmp_path):
+        """βB2-crystallin (2BB2): document that deposited mmCIF lacks reflection counts."""
+        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+
+        filepath = download_pdb('2BB2', dest_dir=str(tmp_path), prefer_mmcif=True)
+        atoms, params = GemmiParser.parse(filepath)
+
+        calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
+        r_result = calc.calculate_r_based()
+        # This assertion is expected to fail because n_obs/n_params are not deposited.
+        assert r_result is not None, (
+            f"2BB2: R-based DPI returned None (parsed n_obs={params.n_obs}, "
+            f"n_params={params.n_params})"
         )
 
     def test_azurin_ii_1ARN_include_hetatm(self, tmp_path):
