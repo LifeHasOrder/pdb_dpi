@@ -666,7 +666,12 @@ def calculate_from_file(file_content: str, filename: str, overrides: dict) -> di
         if ov_n_atoms is not None:
             params.n_atoms_refined = ov_n_atoms
 
-        calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
+        include_hetatm = overrides.get('include_hetatm', True)
+        # Pyodide JS→Python conversion may deliver booleans as strings
+        if isinstance(include_hetatm, str):
+            include_hetatm = include_hetatm.lower() in ('true', '1', 'yes')
+
+        calc = DPICalculator(atoms, params, include_hetatm=include_hetatm, apply_z_correction=False)
         r_result = calc.calculate_r_based()
         rfree_result = calc.calculate_rfree_based()
 
