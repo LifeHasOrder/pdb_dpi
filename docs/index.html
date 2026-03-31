@@ -90,6 +90,12 @@
           <input type="number" id="ov-n-atoms" placeholder="e.g. 2000" step="1" min="1" />
         </div>
       </div>
+      <div class="field-group" style="grid-column: 1 / -1; margin-top: 0.5rem;">
+        <label>
+          <input type="checkbox" id="ov-include-hetatm" checked />
+          Include HETATM records (waters, ligands, metals) in calculation
+        </label>
+      </div>
     </details>
 
     <div class="btn-row">
@@ -299,13 +305,14 @@ document.getElementById('calc-btn').addEventListener('click', async () => {
 
   // Gather overrides
   const overrides = {
-    resolution:   document.getElementById('ov-resolution').value,
-    r_work:       document.getElementById('ov-r-work').value,
-    r_free:       document.getElementById('ov-r-free').value,
-    completeness: document.getElementById('ov-completeness').value,
-    n_obs:        document.getElementById('ov-n-obs').value,
-    n_params:     document.getElementById('ov-n-params').value,
-    n_atoms:      document.getElementById('ov-n-atoms').value,
+    resolution:      document.getElementById('ov-resolution').value,
+    r_work:          document.getElementById('ov-r-work').value,
+    r_free:          document.getElementById('ov-r-free').value,
+    completeness:    document.getElementById('ov-completeness').value,
+    n_obs:           document.getElementById('ov-n-obs').value,
+    n_params:        document.getElementById('ov-n-params').value,
+    n_atoms:         document.getElementById('ov-n-atoms').value,
+    include_hetatm:  document.getElementById('ov-include-hetatm').checked,
   };
 
   try {
