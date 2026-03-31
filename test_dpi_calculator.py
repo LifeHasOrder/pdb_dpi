@@ -887,8 +887,10 @@ class TestTable3EndToEnd:
 
     @pytest.mark.xfail(
         reason=(
-            "2BB2 deposited mmCIF lacks n_obs and n_params; DPI cannot be computed "
-            "from deposited file alone."
+            "2BB2 (βB2-crystallin): the deposited mmCIF lacks reflection count metadata "
+            "(n_obs and n_params) that is required for DPI calculation.  Atoms and "
+            "resolution are present and parseable, but the DPI computation cannot "
+            "succeed without the missing reflection count data."
         ),
         strict=False,
     )
@@ -899,9 +901,12 @@ class TestTable3EndToEnd:
         filepath = download_pdb('2BB2', dest_dir=str(tmp_path), prefer_mmcif=True)
         atoms, params = GemmiParser.parse(filepath)
 
+        assert atoms, f"2BB2: no atoms parsed from {filepath}"
+        assert params.resolution is not None, "2BB2: resolution not parsed"
+
         calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
         r_result = calc.calculate_r_based()
-        # This assertion is expected to fail because n_obs/n_params are not deposited.
+        # Expected to fail: n_obs/n_params are not in the deposited mmCIF.
         assert r_result is not None, (
             f"2BB2: R-based DPI returned None (parsed n_obs={params.n_obs}, "
             f"n_params={params.n_params})"

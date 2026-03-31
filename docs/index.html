@@ -312,7 +312,7 @@ document.getElementById('calc-btn').addEventListener('click', async () => {
     // Pass data to Python via globals
     pyodide.globals.set('_file_content', fileContent);
     pyodide.globals.set('_filename', filename);
-    pyodide.globals.set('_overrides', pyodide.toPy(overrides));
+    pyodide.globals.set('_overrides', overrides);
 
     const resultJs = pyodide.runPython(`
 import json
