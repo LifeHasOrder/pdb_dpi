@@ -372,7 +372,7 @@ class MMCIFParser:
         # Anchor to word boundaries (start-of-line or whitespace) to avoid
         # false matches inside tokens like 'data_ENTRY' matching '_ENTRY'.
         pattern = re.compile(
-            r'(?:^|\s)(_[\w.]+)\s+([\'"])(.*?)\2|(?:^|\s)(_[\w.]+)\s+(\S+)',
+            r'(?:^|\s)(?:(_[\w.]+)\s+([\'"])(.*?)\2|(_[\w.]+)\s+(\S+))',
             re.DOTALL | re.MULTILINE
         )
         for m in pattern.finditer(content):
@@ -468,7 +468,7 @@ class MMCIFParser:
             m = re.match(r'(_atom_site\.\S+)', chunk, re.IGNORECASE)
             if m:
                 header_cols.append(m.group(1).lower())
-                pos += len(content[pos:]) - len(chunk) + m.end()
+                pos += (len(content) - pos) - len(chunk) + m.end()
             else:
                 break
         if not header_cols:
