@@ -796,10 +796,10 @@ class TestTable3EndToEnd:
         has_deposited_rfree,
     ):
         """Download mmCIF from RCSB, parse, compute DPI, compare against Table 3."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb(pdb_id, dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         assert atoms, f"{pdb_id}: no atoms parsed from {filepath}"
         assert params.resolution is not None, f"{pdb_id}: resolution not parsed"
@@ -853,10 +853,10 @@ class TestTable3EndToEnd:
     )
     def test_gammab_crystallin_1GCS_known_mismatch(self, tmp_path):
         """γB-crystallin (1GCS): document known resolution mismatch vs Cruickshank Table 3."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb('1GCS', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         exp_d_min = 1.49
         assert params.resolution is not None
@@ -875,10 +875,10 @@ class TestTable3EndToEnd:
     )
     def test_azurin_ii_1ARN_known_mismatch(self, tmp_path):
         """Azurin II (1ARN): document known mismatch between PDB and Cruickshank values."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb('1ARN', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
         rfree_result = calc.calculate_rfree_based()
@@ -901,10 +901,10 @@ class TestTable3EndToEnd:
     )
     def test_betab2_crystallin_2BB2_missing_params(self, tmp_path):
         """βB2-crystallin (2BB2): document that deposited mmCIF lacks reflection counts."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb('2BB2', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         assert atoms, f"2BB2: no atoms parsed from {filepath}"
         assert params.resolution is not None, "2BB2: resolution not parsed"
@@ -919,10 +919,10 @@ class TestTable3EndToEnd:
 
     def test_azurin_ii_1ARN_include_hetatm(self, tmp_path):
         """Azurin II (1ARN) has Cu²⁺ (HETATM); verify include_hetatm flag works."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb('1ARN', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         calc_with = DPICalculator(atoms, params, include_hetatm=True,  apply_z_correction=False)
         calc_without = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
@@ -966,10 +966,10 @@ class TestTable3EndToEnd:
     )
     def test_immunoglobulin_1BWW_table1_mismatch(self, tmp_path):
         """1BWW (Immunoglobulin, Table 1 only): document known mismatch."""
-        from dpi_calculator import download_pdb, GemmiParser, DPICalculator
+        from dpi_calculator import download_pdb, MMCIFParser, DPICalculator
 
         filepath = download_pdb('1BWW', dest_dir=str(tmp_path), prefer_mmcif=True)
-        atoms, params = GemmiParser.parse(filepath)
+        atoms, params = MMCIFParser.parse(filepath)
 
         calc = DPICalculator(atoms, params, include_hetatm=False, apply_z_correction=False)
         r_result = calc.calculate_r_based()

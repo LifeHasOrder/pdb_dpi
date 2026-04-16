@@ -61,19 +61,9 @@ unlike the exponential form which can produce absurdly large corrections.
 
 ## Installation
 
-Install the required dependency:
+No external dependencies are required — the project uses only the Python standard library.
 
-```bash
-pip install gemmi
-```
-
-Or install all dependencies from the requirements file:
-
-```bash
-pip install -r requirements.txt
-```
-
-Then clone and run:
+Clone and run:
 
 ```bash
 git clone https://github.com/LifeHasOrder/pdb_dpi.git
